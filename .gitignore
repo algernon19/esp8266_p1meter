@@ -36,3 +36,6 @@
 
 # Pycharm
 .idea
+
+# Local secrets (WiFi/MQTT credentials, OTA password) - copy from settings.h.default
+settings.h
