@@ -141,18 +141,18 @@ bool decodeTelegram(int len)
 
 bool readP1Serial()
 {
-    if (Serial2.available())
+    if (p1Serial.available())
     {
 #ifdef DEBUG
-        Serial.println("Serial2 is available");
+        Serial.println("p1Serial is available");
         Serial.println("Memset telegram");
 #endif
         memset(telegram, 0, sizeof(telegram));
-        while (Serial2.available())
+        while (p1Serial.available())
         {
             // Reads the telegram untill it finds a return character
             // That is after each line in the telegram
-            int len = Serial2.readBytesUntil('\n', telegram, P1_MAXLINELENGTH);
+            int len = p1Serial.readBytesUntil('\n', telegram, P1_MAXLINELENGTH);
 
             telegram[len] = '\n';
             telegram[len + 1] = 0;
@@ -164,6 +164,10 @@ bool readP1Serial()
             {
                 return true;
             }
+
+            // Reset the ESP8266 watchdog: SoftwareSerial reads can take a
+            // while and there is no yield() inside readBytesUntil().
+            yield();
         }
     }
     return false;

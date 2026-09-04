@@ -12,7 +12,7 @@
 // #define UPDATE_FULL_INTERVAL 3600000 // 1 Hour
 
 #define HOSTNAME "p1meter"
-#define OTA_PASSWORD "p1meter123"
+#define OTA_PASSWORD "changeme"
 
 #define BAUD_RATE 115200
 
@@ -31,13 +31,13 @@ long LAST_RECONNECT_ATTEMPT = 0;
 long LAST_UPDATE_SENT = 0;
 long LAST_FULL_UPDATE_SENT = 0;
 
-char WIFI_SSID[32] = "";
-char WIFI_PASS[32] = "";
+char WIFI_SSID[32] = "your-wifi-ssid";
+char WIFI_PASS[32] = "your-wifi-password";
 
-char MQTT_HOST[64] = "";
-char MQTT_PORT[6] = "";
-char MQTT_USER[32] = "";
-char MQTT_PASS[32] = "";
+char MQTT_HOST[64] = "your-mqtt-host";
+char MQTT_PORT[6] = "1883";
+char MQTT_USER[32] = "your-mqtt-username";
+char MQTT_PASS[32] = "your-mqtt-password";
 
 char telegram[P1_MAXLINELENGTH];
 
