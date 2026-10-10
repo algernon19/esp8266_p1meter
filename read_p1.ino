@@ -50,7 +50,17 @@ long getValue(char *buffer, int maxlen, char startchar, char endchar)
     int s = findCharInArrayRev(buffer, startchar, maxlen - 2);
     int l = findCharInArrayRev(buffer, endchar, maxlen - 2) - s - 1;
 
+    // Guard against startchar/endchar not being found (or found out of
+    // order): findCharInArrayRev returns -1 for "not found", which would
+    // otherwise turn into a negative length reinterpreted as a huge unsigned
+    // size in strncpy - a buffer overflow that also explains bogus,
+    // near-INT_MAX readout values.
     char res[16];
+    if (s < 0 || l <= 0 || l >= (int)sizeof(res))
+    {
+        return 0;
+    }
+
     memset(res, 0, sizeof(res));
 
     if (strncpy(res, buffer + s + 1, l))
@@ -79,6 +89,12 @@ bool decodeTelegram(int len)
     int endChar = findCharInArrayRev(telegram, '!', len);
     bool validCRCFound = false;
 
+    P1_LINES_RECEIVED++;
+    LAST_P1_LINE_MILLIS = millis();
+    int copyLen = min(len, (int)sizeof(LAST_P1_LINE) - 1);
+    memcpy(LAST_P1_LINE, telegram, copyLen);
+    LAST_P1_LINE_LEN = copyLen;
+
 #ifdef DEBUG
     for (int cnt = 0; cnt < len; cnt++)
     {
@@ -89,8 +105,10 @@ bool decodeTelegram(int len)
 
     if (startChar >= 0)
     {
-        // * Start found. Reset CRC calculation
+        // * Start found. Reset CRC calculation and begin a fresh capture.
+        P1_TELEGRAM_START_COUNT++;
         currentCRC = crc16(0x0000, (unsigned char *)telegram + startChar, len - startChar);
+        CURRENT_TELEGRAM_LEN = 0;
     }
     else if (endChar >= 0)
     {
@@ -102,6 +120,11 @@ bool decodeTelegram(int len)
 
         messageCRC[4] = 0; // * Thanks to HarmOtten (issue 5)
         validCRCFound = (strtol(messageCRC, NULL, 16) == currentCRC);
+
+        if (validCRCFound)
+            P1_CRC_VALID_COUNT++;
+        else
+            P1_CRC_INVALID_COUNT++;
 
 #ifdef DEBUG
         if (validCRCFound)
@@ -116,12 +139,42 @@ bool decodeTelegram(int len)
         currentCRC = crc16(currentCRC, (unsigned char *)telegram, len);
     }
 
+    // Accumulate this line into the current telegram capture buffer, so the
+    // full raw telegram (not just the last line) can be inspected on the
+    // status page.
+    int room = P1_MAXTELEGRAMLENGTH - 1 - (int)CURRENT_TELEGRAM_LEN;
+    if (room > 0)
+    {
+        int appendLen = min(len, room);
+        memcpy(CURRENT_TELEGRAM_BUFFER + CURRENT_TELEGRAM_LEN, telegram, appendLen);
+        CURRENT_TELEGRAM_LEN += appendLen;
+    }
+
+    if (endChar >= 0)
+    {
+        // Telegram complete (valid or not) - snapshot it for the status page.
+        int snapshotLen = min((int)CURRENT_TELEGRAM_LEN, (int)sizeof(LAST_FULL_TELEGRAM) - 1);
+        memcpy(LAST_FULL_TELEGRAM, CURRENT_TELEGRAM_BUFFER, snapshotLen);
+        LAST_FULL_TELEGRAM_LEN = snapshotLen;
+        LAST_FULL_TELEGRAM_CRC_VALID = validCRCFound;
+    }
+
     // Loops throug all the telegramObjects to find the code in the telegram line
     // If it finds the code the value will be stored in the object so it can later be send to the mqtt broker
+    bool matchedKnownCode = false;
     for (int i = 0; i < NUMBER_OF_READOUTS; i++)
     {
         if (strncmp(telegram, telegramObjects[i].code, strlen(telegramObjects[i].code)) == 0)
         {
+            matchedKnownCode = true;
+            if (!telegramObjects[i].everSeen)
+            {
+                // First time this OBIS code has ever been seen: announce it
+                // to Home Assistant now that we know the meter really has it.
+                telegramObjects[i].everSeen = true;
+                publishHomeAssistantDiscoveryFor(i);
+            }
+
             long newValue = getValue(telegram, len, telegramObjects[i].startChar, telegramObjects[i].endChar);
             if (newValue != telegramObjects[i].value)
             {
@@ -129,11 +182,15 @@ bool decodeTelegram(int len)
                 telegramObjects[i].sendData = true;
             }
             break;
-
-#ifdef DEBUG
-            Serial.println((String) "Found a Telegram object: " + telegramObjects[i].name + " value: " + telegramObjects[i].value);
-#endif
         }
+    }
+
+    // Any OBIS-coded line we don't have a curated field for still gets
+    // forwarded as-is (e.g. date/time, breaker status), so nothing the
+    // meter sends is silently dropped.
+    if (!matchedKnownCode && startChar < 0 && endChar < 0)
+    {
+        publishRawObisLine(telegram, len);
     }
 
     return validCRCFound;
@@ -141,18 +198,14 @@ bool decodeTelegram(int len)
 
 bool readP1Serial()
 {
-    if (p1Serial.available())
+    if (Serial.available())
     {
-#ifdef DEBUG
-        Serial.println("p1Serial is available");
-        Serial.println("Memset telegram");
-#endif
         memset(telegram, 0, sizeof(telegram));
-        while (p1Serial.available())
+        while (Serial.available())
         {
             // Reads the telegram untill it finds a return character
             // That is after each line in the telegram
-            int len = p1Serial.readBytesUntil('\n', telegram, P1_MAXLINELENGTH);
+            int len = Serial.readBytesUntil('\n', telegram, P1_MAXLINELENGTH);
 
             telegram[len] = '\n';
             telegram[len + 1] = 0;
